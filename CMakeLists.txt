@@ -39,3 +39,7 @@ target_link_libraries(hello_nvcloth
        PUBLIC d3dcompiler.lib d3d11.lib dxgi.lib comctl32.lib)
 target_link_libraries(hello_nvcloth PUBLIC NvCloth)
 
+add_subdirectory(external/pybind11)
+pybind11_add_module(example
+        src/example.cpp
+        )
