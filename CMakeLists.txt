@@ -43,3 +43,18 @@ add_subdirectory(external/pybind11)
 pybind11_add_module(example
         src/example.cpp
         )
+        
+pybind11_add_module(pynvcloth
+        src/nvcloth_wrapper.cpp
+        src/CallbackImplementations.cpp
+        )
+target_include_directories(pynvcloth
+        # TODO(daniel): consider wrapping these transitive deps in an interface library
+        PRIVATE ${PXSHARED_ROOT_DIR}/include/foundation
+        PRIVATE ${PXSHARED_ROOT_DIR}/include
+        PRIVATE ${PXSHARED_ROOT_DIR}/src/foundation/include
+        PRIVATE ${NVCLOTH_ROOT_DIR}/include
+        PRIVATE ${NVCLOTH_ROOT_DIR}/extensions/include)
+target_link_libraries(pynvcloth
+       PUBLIC d3dcompiler.lib d3d11.lib dxgi.lib comctl32.lib)
+target_link_libraries(pynvcloth PUBLIC NvCloth)
