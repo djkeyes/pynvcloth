@@ -25,8 +25,8 @@ add_subdirectory(${NVCLOTH_ROOT_DIR}/compiler/cmake/windows "${CMAKE_CURRENT_BIN
 
 # Specify the build targets
 add_executable(hello_nvcloth
-        hello_nvcloth.cpp
-        CallbackImplementations.cpp
+        src/hello_nvcloth.cpp
+        src/CallbackImplementations.cpp
         )
 target_include_directories(hello_nvcloth
         # TODO(daniel): consider wrapping these transitive deps in an interface library
