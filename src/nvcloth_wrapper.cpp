@@ -147,6 +147,16 @@ PYBIND11_MODULE(pynvcloth, m) {
       .def(py::init<>())
       .def("set_solver_frequency",
            [](Cloth& c, const float t) { c->setSolverFrequency(t); })
+      .def("set_gravity",
+           [](Cloth& c, const physx::PxVec3& gravity) {
+             c->setGravity(gravity);
+           })
+      .def("set_lift_coefficient",
+           [](Cloth& c, const float coeff) { c->setLiftCoefficient(coeff); })
+      .def("set_drag_coefficient",
+           [](Cloth& c, const float coeff) { c->setDragCoefficient(coeff); })
+      .def("set_friction",
+           [](Cloth& c, const float coeff) { c->setFriction(coeff); })
       .def("get_current_particles", [](Cloth& c) {
         const auto particles = c->getCurrentParticles();
         // copy and return result

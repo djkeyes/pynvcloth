@@ -76,6 +76,9 @@ solver.add_cloth(cloth)
 
 cloth.set_solver_frequency(300)
 cloth.set_gravity(gravity)
+cloth.set_lift_coefficient(0.1)
+cloth.set_drag_coefficient(0.1)
+cloth.set_friction(0.1)
 
 
 def gen_simulation():
