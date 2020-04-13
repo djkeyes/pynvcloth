@@ -8,6 +8,7 @@
 #include <NvCloth/Cloth.h>
 #include <NvCloth/Fabric.h>
 #include <NvCloth/Factory.h>
+#include <NvCloth/Solver.h>
 #include <NvClothExt/ClothFabricCooker.h>
 
 #include "CallbackImplementations.h"
@@ -40,11 +41,18 @@ struct ClothDeleter {
 
 using Cloth = unique_ptr<nv::cloth::Cloth, ClothDeleter>;
 
+struct SolverDeleter {
+  void operator()(nv::cloth::Solver* const s) const { NV_CLOTH_DELETE(s); }
+};
+
+using Solver = unique_ptr<nv::cloth::Solver, SolverDeleter>;
+
 // We are using unique_ptr to enforce custom deleters, so don't let pybind11 try
 // to extract out the raw pointers.
 PYBIND11_MAKE_OPAQUE(Factory);
 PYBIND11_MAKE_OPAQUE(Fabric);
 PYBIND11_MAKE_OPAQUE(Cloth);
+PYBIND11_MAKE_OPAQUE(Solver);
 
 struct Triangle {
   Triangle() : a(0), b(0), c(0) {}
@@ -110,17 +118,51 @@ PYBIND11_MODULE(pynvcloth, m) {
       .def("create_cloth",
            [](Factory& factory, vector<physx::PxVec4>& particle_positions,
               Fabric& fabric) {
-             return Cloth(factory->createCloth(
+             Cloth cloth(factory->createCloth(
                  nv::cloth::Range<physx::PxVec4>(
-                     &particle_positions[0],
-                     &particle_positions[0] + particle_positions.size()),
+                     particle_positions.data(),
+                     particle_positions.data() + particle_positions.size()),
                  *fabric));
-           });
+
+             // TODO(daniel): how should users take advantage of this?
+             vector<nv::cloth::PhaseConfig> phases(fabric->getNumPhases());
+             for (int i = 0; i < fabric->getNumPhases(); i++) {
+               phases[i].mPhaseIndex = i;
+               phases[i].mStiffness = 1.0f;
+               phases[i].mStiffnessMultiplier = 1.0f;
+               phases[i].mCompressionLimit = 1.0f;
+               phases[i].mStretchLimit = 1.0f;
+             }
+             cloth->setPhaseConfig(nv::cloth::Range<nv::cloth::PhaseConfig>(
+                 phases.data(), phases.data() + fabric->getNumPhases()));
+             return cloth;
+           })
+      .def("create_solver",
+           [](Factory& factory) { return Solver(factory->createSolver()); });
 
   m.def("create_factory_cpu", &create_factory_cpu);
 
   py::class_<Fabric>(m, "Fabric").def(py::init<>());
-  py::class_<Cloth>(m, "Cloth").def(py::init<>());
+  py::class_<Cloth>(m, "Cloth")
+      .def(py::init<>())
+      .def("set_solver_frequency",
+           [](Cloth& c, const float t) { c->setSolverFrequency(t); })
+      .def("get_current_particles", [](Cloth& c) {
+        const auto particles = c->getCurrentParticles();
+        // copy and return result
+        return vector<physx::PxVec4>(particles.begin(), particles.end());
+      });
+  py::class_<Solver>(m, "Solver")
+      .def(py::init<>())
+      .def("add_cloth", [](Solver& s, Cloth& c) { s->addCloth(c.get()); })
+      .def("remove_cloth", [](Solver& s, Cloth& c) { s->removeCloth(c.get()); })
+      .def("simulate", [](Solver& s, const float dt) {
+        s->beginSimulation(dt);
+        for (int i = 0; i < s->getSimulationChunkCount(); i++) {
+          s->simulateChunk(i);
+        }
+        s->endSimulation();
+      });
 
   py::class_<Triangle>(m, "Triangle")
       .def(py::init<>())
