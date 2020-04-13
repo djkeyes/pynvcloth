@@ -4,7 +4,7 @@ import sys
 # You may need to supply a value for PYTHONPATH if this is not your build
 # directory
 sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), '../build/bin/'))
-import pynvcloth as nvc
+import pynvcloth as nvc  # noqa: E402
 
 # The NvCloth environment must be setup (and destroyed) explicitly.
 # daniel: This doesn't seem very python-like. Can we do this implicitly?
