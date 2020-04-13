@@ -126,7 +126,7 @@ PYBIND11_MODULE(pynvcloth, m) {
 
              // TODO(daniel): how should users take advantage of this?
              vector<nv::cloth::PhaseConfig> phases(fabric->getNumPhases());
-             for (int i = 0; i < fabric->getNumPhases(); i++) {
+             for (uint32_t i = 0; i < fabric->getNumPhases(); i++) {
                phases[i].mPhaseIndex = i;
                phases[i].mStiffness = 1.0f;
                phases[i].mStiffnessMultiplier = 1.0f;
