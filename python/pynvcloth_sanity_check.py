@@ -89,9 +89,20 @@ cloth.set_lift_coefficient(0.1)
 cloth.set_drag_coefficient(0.1)
 cloth.set_friction(0.1)
 
+box = trimesh.primitives.Box(extents=[0.4, 0.4, 0.4],
+                             transform=np.hstack([np.eye(4, 3), np.array([-0.5, -0.5, 0, 1]).reshape(-1, 1)]))
+box.visual.vertex_colors = np.array([127, 127, 255])
+box_faces = nvc.VectorTri([nvc.Triangle(f[0], f[1], f[2]) for f in box.faces])
+box_verts = nvc.VectorNx3([nvc.Vec3(v[0], v[1], v[2]) for v in box.vertices])
+cloth.set_collision_mesh(box_faces, box_verts)
+
 
 def gen_simulation():
     while True:
+        box.apply_translation(np.array([0.003, 0.0, 0.0]))
+        box_verts = nvc.VectorNx3([nvc.Vec3(v[0], v[1], v[2]) for v in box.vertices])
+        cloth.set_collision_mesh(box_faces, box_verts)
+
         cur_particles = cloth.get_current_particles()
         particles_as_py = [[p.x, p.y, p.z, p.w] for p in cur_particles]
         solver.simulate(1. / 60.)
@@ -107,7 +118,7 @@ def viewer_callback(scene):
     render_mesh.vertices = verts
 
 
-v = SceneViewer(trimesh.Scene([render_mesh]), start_loop=False, callback=viewer_callback)
+v = SceneViewer(trimesh.Scene([render_mesh, box]), start_loop=False, callback=viewer_callback)
 pyglet.app.run()
 
 print('clearing up!', flush=True)

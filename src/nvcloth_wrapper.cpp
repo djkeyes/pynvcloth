@@ -105,6 +105,23 @@ Fabric cook_fabric_from_mesh(const Factory& factory,
                                           use_geodesic_tether));
 }
 
+void set_collision_mesh(Cloth& c,
+                        const vector<Triangle>& triangles,
+                        const vector<physx::PxVec3>& vertices) {
+  // NvCloth expects separate triangles, so we really do have to make some
+  // copies here.
+  vector<physx::PxVec3> split_triangles(triangles.size() * 3);
+  for (size_t i = 0; i < triangles.size(); ++i) {
+    const auto& tri = triangles[i];
+    split_triangles[3ULL * i + 0ULL] = vertices[tri.a];
+    split_triangles[3ULL * i + 1ULL] = vertices[tri.b];
+    split_triangles[3ULL * i + 2ULL] = vertices[tri.c];
+  }
+  const nv::cloth::Range<physx::PxVec3> range(
+      split_triangles.data(), split_triangles.data() + split_triangles.size());
+  c->setTriangles(range, 0, c->getNumTriangles());
+}
+
 PYBIND11_MODULE(pynvcloth, m) {
   m.doc() = "A python wrapper around NvCloth";
 
@@ -157,6 +174,7 @@ PYBIND11_MODULE(pynvcloth, m) {
            [](Cloth& c, const float coeff) { c->setDragCoefficient(coeff); })
       .def("set_friction",
            [](Cloth& c, const float coeff) { c->setFriction(coeff); })
+      .def("set_collision_mesh", &set_collision_mesh)
       .def("get_current_particles", [](Cloth& c) {
         const auto particles = c->getCurrentParticles();
         // copy and return result
