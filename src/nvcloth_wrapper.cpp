@@ -1,3 +1,4 @@
+
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -10,6 +11,8 @@
 #include <NvCloth/Factory.h>
 #include <NvCloth/Solver.h>
 #include <NvClothExt/ClothFabricCooker.h>
+#include <d3d11.h>
+#include <d3dcommon.h>
 
 #include "CallbackImplementations.h"
 
@@ -53,6 +56,7 @@ PYBIND11_MAKE_OPAQUE(Factory);
 PYBIND11_MAKE_OPAQUE(Fabric);
 PYBIND11_MAKE_OPAQUE(Cloth);
 PYBIND11_MAKE_OPAQUE(Solver);
+PYBIND11_MAKE_OPAQUE(std::unique_ptr<DxContextManagerCallbackImpl>);
 
 struct Triangle {
   Triangle() : a(0), b(0), c(0) {}
@@ -74,6 +78,23 @@ struct Quad {
 
 auto create_factory_cpu() {
   return Factory(NvClothCreateFactoryCPU());
+}
+
+auto create_dx11_context_manager() {
+  // This is a little sloppy -- for directx, we need something that owns both
+  // the device and the factory.
+  ID3D11Device* device;
+  ID3D11DeviceContext* context;
+  const auto feature_level = D3D_FEATURE_LEVEL_11_0;
+  D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+                    &feature_level, 1, D3D11_SDK_VERSION, &device, nullptr,
+                    &context);
+  return std::make_unique<DxContextManagerCallbackImpl>(device, false);
+}
+
+auto create_factory_dx11(
+    const std::unique_ptr<DxContextManagerCallbackImpl>& context_manager) {
+  return Factory(NvClothCreateFactoryDX11(context_manager.get()));
 }
 
 // We need to be able to pass in arrays with C++-managed memory (since
@@ -158,6 +179,12 @@ PYBIND11_MODULE(pynvcloth, m) {
            [](Factory& factory) { return Solver(factory->createSolver()); });
 
   m.def("create_factory_cpu", &create_factory_cpu);
+
+  (void)py::class_<std::unique_ptr<DxContextManagerCallbackImpl>>(
+      m, "DirectX11ContextManager");
+
+  m.def("create_dx11_context_manager", &create_dx11_context_manager);
+  m.def("create_factory_dx11", &create_factory_dx11);
 
   py::class_<Fabric>(m, "Fabric").def(py::init<>());
   py::class_<Cloth>(m, "Cloth")

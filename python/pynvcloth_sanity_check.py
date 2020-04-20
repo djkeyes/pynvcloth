@@ -76,7 +76,12 @@ cmd.inv_masses = nvc.as_bounded_data(inv_masses)
 
 print(cmd.is_valid(), flush=True)
 
-factory = nvc.create_factory_cpu()
+use_dx11 = True
+if use_dx11:
+    device_manager = nvc.create_dx11_context_manager()
+    factory = nvc.create_factory_dx11(device_manager)
+else:
+    factory = nvc.create_factory_cpu()
 gravity = nvc.Vec3(0., -9.8, 0.)
 fabric = nvc.cook_fabric_from_mesh(factory, cmd, gravity, False)
 cloth = factory.create_cloth(point_masses, fabric)
@@ -127,5 +132,6 @@ del solver
 del cloth
 del fabric
 del factory
+del device_manager
 
 nvc.free_env()
