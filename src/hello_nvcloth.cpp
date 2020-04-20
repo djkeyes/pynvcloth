@@ -1,11 +1,13 @@
 
 #include <iostream>
 #include <memory>
+#include <optional>
 
 #include <NvCloth/Cloth.h>
 #include <NvCloth/Factory.h>
 #include <NvClothExt/ClothFabricCooker.h>
 #include <PxVec3.h>
+#include <d3d11.h>
 
 #include "CallbackImplementations.h"
 
@@ -44,11 +46,35 @@ struct Triangle {
   uint32_t a, b, c;
 };
 
-void run_simple_simulation() {
+void run_simple_simulation(bool use_directx) {
   cout << "hello nvcloth!" << endl;
 
-  Factory factory(NvClothCreateFactoryCPU(), NvClothDestroyFactory);
+  std::optional<DxContextManagerCallbackImpl> device_context_manager;
 
+  use_directx = use_directx && NvClothCompiledWithDxSupport();
+
+  if (use_directx) {
+    // This is a little sloppy -- for directx, we need something that owns both
+    // the device and the factory.
+    ID3D11Device* device;
+    ID3D11DeviceContext* context;
+    auto feature_level = D3D_FEATURE_LEVEL_11_0;
+    auto result = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+                                    0, &feature_level, 1, D3D11_SDK_VERSION,
+                                    &device, nullptr, &context);
+    if (result != S_OK) {
+      exit(-1);
+    }
+    device_context_manager.emplace(device);
+  }
+
+  Factory factory(nullptr, nullptr);
+  if (!use_directx) {
+    factory = Factory(NvClothCreateFactoryCPU(), NvClothDestroyFactory);
+  } else {
+    factory = Factory(NvClothCreateFactoryDX11(&*device_context_manager),
+                      NvClothDestroyFactory);
+  }
   nv::cloth::Vector<int32_t>::Type phase_types;
 
   nv::cloth::ClothMeshDesc mesh_desc;
@@ -112,7 +138,8 @@ void run_simple_simulation() {
 int main(int argc, char** argv) {
   NvClothEnvironment::AllocateEnv();
 
-  run_simple_simulation();
+  run_simple_simulation(false);
+  run_simple_simulation(true);
 
   NvClothEnvironment::FreeEnv();
   return 0;

@@ -20,7 +20,7 @@ set(PX_SELECT_COMPONENTS PxFoundation)
 find_package(PxShared REQUIRED)
 find_package(NvCloth REQUIRED)
 set(NV_CLOTH_ENABLE_CUDA 0)
-set(NV_CLOTH_ENABLE_DX11 0)
+set(NV_CLOTH_ENABLE_DX11 1)
 add_subdirectory(${NVCLOTH_ROOT_DIR}/compiler/cmake/windows "${CMAKE_CURRENT_BINARY_DIR}/NvCloth_bin")
 
 # Specify the build targets
