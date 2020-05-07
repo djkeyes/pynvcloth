@@ -202,6 +202,28 @@ PYBIND11_MODULE(pynvcloth, m) {
       .def("set_friction",
            [](Cloth& c, const float coeff) { c->setFriction(coeff); })
       .def("set_collision_mesh", &set_collision_mesh)
+      .def("clear_inertia", [](Cloth& c) { c->clearInertia(); })
+      .def("set_damping",
+           [](Cloth& c, const physx::PxVec3& v) { c->setDamping(v); })
+      .def("set_linear_drag",
+           [](Cloth& c, const physx::PxVec3& v) { c->setLinearDrag(v); })
+      .def("set_angular_drag",
+           [](Cloth& c, const physx::PxVec3& v) { c->setAngularDrag(v); })
+      .def("set_linear_inertia",
+           [](Cloth& c, const physx::PxVec3& v) { c->setLinearInertia(v); })
+      .def("set_angular_inertia",
+           [](Cloth& c, const physx::PxVec3& v) { c->setAngularInertia(v); })
+      .def(
+          "set_centrifugal_inertia",
+          [](Cloth& c, const physx::PxVec3& v) { c->setCentrifugalInertia(v); })
+      .def("set_stiffness_frequency",
+           [](Cloth& c, const float f) { c->setStiffnessFrequency(f); })
+      .def("enable_continuous_collision",
+           [](Cloth& c, const bool b) { c->enableContinuousCollision(b); })
+      .def("set_collision_mass_scale",
+           [](Cloth& c, const float f) { c->setCollisionMassScale(f); })
+      .def("clear_particle_accelerations",
+           [](Cloth& c) { c->clearParticleAccelerations(); })
       .def("get_current_particles", [](Cloth& c) {
         const auto particles = c->getCurrentParticles();
         // copy and return result
