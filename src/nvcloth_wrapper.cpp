@@ -98,6 +98,10 @@ struct FactoryDeleter {
   }
 };
 
+class Cloth;
+class Fabric;
+class Solver;
+
 class Factory {
  public:
   Factory() : directx_context_manager_(nullptr), impl_(nullptr) {}
@@ -108,9 +112,13 @@ class Factory {
 
   static auto create_factory_dx11(
       shared_ptr<DxContextManager> context_manager) {
-    const auto f = NvClothCreateFactoryDX11(context_manager.get()->get());
+    const auto f = NvClothCreateFactoryDX11(context_manager->get());
     return make_shared<Factory>(f, std::move(context_manager));
   }
+
+  shared_ptr<Cloth> create_cloth(vector<physx::PxVec4>& particle_positions,
+                                 shared_ptr<Fabric> fabric);
+  shared_ptr<Solver> create_solver();
 
   nv::cloth::Factory* get() const { return impl_.get(); };
 
@@ -155,6 +163,44 @@ class Cloth {
   Cloth(nv::cloth::Cloth* const impl, shared_ptr<Fabric> fabric)
       : fabric_(std::move(fabric)), impl_(impl) {}
 
+  void set_solver_frequency(const float t) { impl_->setSolverFrequency(t); }
+  void set_gravity(const physx::PxVec3& gravity) { impl_->setGravity(gravity); }
+  void set_lift_coefficient(const float coeff) {
+    impl_->setLiftCoefficient(coeff);
+  }
+  void set_drag_coefficient(const float coeff) {
+    impl_->setDragCoefficient(coeff);
+  }
+  void set_friction(const float coeff) { impl_->setFriction(coeff); }
+  void clear_inertia() { impl_->clearInertia(); }
+  void set_damping(const physx::PxVec3& v) { impl_->setDamping(v); }
+  void set_linear_drag(const physx::PxVec3& v) { impl_->setLinearDrag(v); }
+  void set_angular_drag(const physx::PxVec3& v) { impl_->setAngularDrag(v); }
+  void set_linear_inertia(const physx::PxVec3& v) {
+    impl_->setLinearInertia(v);
+  }
+  void set_angular_inertia(const physx::PxVec3& v) {
+    impl_->setAngularInertia(v);
+  }
+  void set_centrifugal_inertia(const physx::PxVec3& v) {
+    impl_->setCentrifugalInertia(v);
+  }
+  void set_stiffness_frequency(const float f) {
+    impl_->setStiffnessFrequency(f);
+  }
+  void enable_continuous_collision(const bool b) {
+    impl_->enableContinuousCollision(b);
+  }
+  void set_collision_mass_scale(const float f) {
+    impl_->setCollisionMassScale(f);
+  }
+  void clear_particle_accelerations() { impl_->clearParticleAccelerations(); }
+  auto get_current_particles() {
+    const auto particles = impl_->getCurrentParticles();
+    // copy and return result
+    return vector<physx::PxVec4>(particles.begin(), particles.end());
+  }
+
   auto get() const { return impl_.get(); }
 
  private:
@@ -194,19 +240,48 @@ class Solver {
     cloths_.erase(cloth);
   }
 
+  void simulate(const float dt) {
+    impl_->beginSimulation(dt);
+    for (int i = 0; i < impl_->getSimulationChunkCount(); i++) {
+      impl_->simulateChunk(i);
+    }
+    impl_->endSimulation();
+  }
+
  private:
   unique_ptr<nv::cloth::Solver, SolverDeleter> impl_;
 
   std::unordered_set<shared_ptr<Cloth>> cloths_;
 };
 
-// We are using unique_ptr to enforce custom deleters, so don't let pybind11 try
-// to extract out the raw pointers.
-// PYBIND11_MAKE_OPAQUE(Factory);
-// PYBIND11_MAKE_OPAQUE(Fabric);
-// PYBIND11_MAKE_OPAQUE(Cloth);
-// PYBIND11_MAKE_OPAQUE(Solver);
-// PYBIND11_MAKE_OPAQUE(std::unique_ptr<DXC>);
+shared_ptr<Cloth> Factory::create_cloth(
+    vector<physx::PxVec4>& particle_positions,
+    shared_ptr<Fabric> fabric) {
+  shared_ptr<Cloth> cloth = make_shared<Cloth>(
+      impl_->createCloth(
+          nv::cloth::Range<physx::PxVec4>(
+              particle_positions.data(),
+              particle_positions.data() + particle_positions.size()),
+          *fabric->get()),
+      fabric);
+
+  // TODO(daniel): how should users take advantage of this?
+  vector<nv::cloth::PhaseConfig> phases(fabric->get()->getNumPhases());
+  for (uint32_t i = 0; i < fabric->get()->getNumPhases(); i++) {
+    phases[i].mPhaseIndex = i;
+    phases[i].mStiffness = 1.0f;
+    phases[i].mStiffnessMultiplier = 1.0f;
+    phases[i].mCompressionLimit = 1.0f;
+    phases[i].mStretchLimit = 1.0f;
+  }
+  cloth->get()->setPhaseConfig(nv::cloth::Range<nv::cloth::PhaseConfig>(
+      phases.data(), phases.data() + fabric->get()->getNumPhases()));
+  return cloth;
+}
+
+shared_ptr<Solver> Factory::create_solver() {
+  return make_shared<Solver>(impl_->createSolver());
+}
 
 struct Triangle {
   Triangle() : a(0), b(0), c(0) {}
@@ -283,36 +358,8 @@ PYBIND11_MODULE(pynvcloth, m) {
 
   py::class_<Factory, shared_ptr<Factory>>(m, "Factory")
       .def(py::init<>())
-      .def("create_cloth",
-           [](Factory& factory, vector<physx::PxVec4>& particle_positions,
-              shared_ptr<Fabric> fabric) {
-             Cloth cloth(
-                 factory.get()->createCloth(
-                     nv::cloth::Range<physx::PxVec4>(
-                         particle_positions.data(),
-                         particle_positions.data() + particle_positions.size()),
-                     *fabric->get()),
-                 fabric);
-
-             // TODO(daniel): how should users take advantage of this?
-             vector<nv::cloth::PhaseConfig> phases(
-                 fabric->get()->getNumPhases());
-             for (uint32_t i = 0; i < fabric->get()->getNumPhases(); i++) {
-               phases[i].mPhaseIndex = i;
-               phases[i].mStiffness = 1.0f;
-               phases[i].mStiffnessMultiplier = 1.0f;
-               phases[i].mCompressionLimit = 1.0f;
-               phases[i].mStretchLimit = 1.0f;
-             }
-             cloth.get()->setPhaseConfig(
-                 nv::cloth::Range<nv::cloth::PhaseConfig>(
-                     phases.data(),
-                     phases.data() + fabric->get()->getNumPhases()));
-             return cloth;
-           })
-      .def("create_solver", [](Factory& factory) {
-        return Solver(factory.get()->createSolver());
-      });
+      .def("create_cloth", &Factory::create_cloth)
+      .def("create_solver", &Factory::create_solver);
 
   m.def("create_factory_cpu", &Factory::create_factory_cpu);
 
@@ -325,67 +372,30 @@ PYBIND11_MODULE(pynvcloth, m) {
   py::class_<Fabric, shared_ptr<Fabric>>(m, "Fabric").def(py::init<>());
   py::class_<Cloth, shared_ptr<Cloth>>(m, "Cloth")
       .def(py::init<>())
-      .def("set_solver_frequency",
-           [](Cloth& c, const float t) { c.get()->setSolverFrequency(t); })
-      .def("set_gravity",
-           [](Cloth& c, const physx::PxVec3& gravity) {
-             c.get()->setGravity(gravity);
-           })
-      .def("set_lift_coefficient",
-           [](Cloth& c, const float coeff) {
-             c.get()->setLiftCoefficient(coeff);
-           })
-      .def("set_drag_coefficient",
-           [](Cloth& c, const float coeff) {
-             c.get()->setDragCoefficient(coeff);
-           })
-      .def("set_friction",
-           [](Cloth& c, const float coeff) { c.get()->setFriction(coeff); })
+      .def("set_solver_frequency", &Cloth::set_solver_frequency)
+      .def("set_gravity", &Cloth::set_gravity)
+      .def("set_lift_coefficient", &Cloth::set_lift_coefficient)
+      .def("set_drag_coefficient", &Cloth::set_drag_coefficient)
+      .def("set_friction", &Cloth::set_friction)
       .def("set_collision_mesh", &set_collision_mesh)
-      .def("clear_inertia", [](Cloth& c) { c.get()->clearInertia(); })
-      .def("set_damping",
-           [](Cloth& c, const physx::PxVec3& v) { c.get()->setDamping(v); })
-      .def("set_linear_drag",
-           [](Cloth& c, const physx::PxVec3& v) { c.get()->setLinearDrag(v); })
-      .def("set_angular_drag",
-           [](Cloth& c, const physx::PxVec3& v) { c.get()->setAngularDrag(v); })
-      .def("set_linear_inertia",
-           [](Cloth& c, const physx::PxVec3& v) {
-             c.get()->setLinearInertia(v);
-           })
-      .def("set_angular_inertia",
-           [](Cloth& c, const physx::PxVec3& v) {
-             c.get()->setAngularInertia(v);
-           })
-      .def("set_centrifugal_inertia",
-           [](Cloth& c, const physx::PxVec3& v) {
-             c.get()->setCentrifugalInertia(v);
-           })
-      .def("set_stiffness_frequency",
-           [](Cloth& c, const float f) { c.get()->setStiffnessFrequency(f); })
-      .def(
-          "enable_continuous_collision",
-          [](Cloth& c, const bool b) { c.get()->enableContinuousCollision(b); })
-      .def("set_collision_mass_scale",
-           [](Cloth& c, const float f) { c.get()->setCollisionMassScale(f); })
-      .def("clear_particle_accelerations",
-           [](Cloth& c) { c.get()->clearParticleAccelerations(); })
-      .def("get_current_particles", [](Cloth& c) {
-        const auto particles = c.get()->getCurrentParticles();
-        // copy and return result
-        return vector<physx::PxVec4>(particles.begin(), particles.end());
-      });
+      .def("clear_inertia", &Cloth::clear_inertia)
+      .def("set_damping", &Cloth::set_damping)
+      .def("set_linear_drag", &Cloth::set_linear_drag)
+      .def("set_angular_drag", &Cloth::set_angular_drag)
+      .def("set_linear_inertia", &Cloth::set_linear_inertia)
+      .def("set_angular_inertia", &Cloth::set_angular_inertia)
+      .def("set_centrifugal_inertia", &Cloth::set_centrifugal_inertia)
+      .def("set_stiffness_frequency", &Cloth::set_stiffness_frequency)
+      .def("enable_continuous_collision", &Cloth::enable_continuous_collision)
+      .def("set_collision_mass_scale", &Cloth::set_collision_mass_scale)
+      .def("clear_particle_accelerations", &Cloth::clear_particle_accelerations)
+      .def("get_current_particles", &Cloth::get_current_particles);
+
   py::class_<Solver, shared_ptr<Solver>>(m, "Solver")
       .def(py::init<>())
       .def("add_cloth", &Solver::add_cloth)
       .def("remove_cloth", &Solver::remove_cloth)
-      .def("simulate", [](Solver& s, const float dt) {
-        s.get()->beginSimulation(dt);
-        for (int i = 0; i < s.get()->getSimulationChunkCount(); i++) {
-          s.get()->simulateChunk(i);
-        }
-        s.get()->endSimulation();
-      });
+      .def("simulate", &Solver::simulate);
 
   py::class_<Triangle>(m, "Triangle")
       .def(py::init<>())
