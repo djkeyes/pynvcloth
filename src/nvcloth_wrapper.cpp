@@ -82,7 +82,8 @@ void free_env() {
 class DxContextManager {
  public:
   DxContextManager() : impl_(nullptr) {}
-  DxContextManager(DxContextManagerCallbackImpl* const impl) : impl_(impl) {}
+  explicit DxContextManager(DxContextManagerCallbackImpl* const impl)
+      : impl_(impl) {}
 
   auto get() const { return impl_.get(); }
 
@@ -275,7 +276,7 @@ shared_ptr<Cloth> Factory::create_cloth(MatX4f& particle_positions,
       reinterpret_cast<physx::PxVec4*>(begin),
       reinterpret_cast<physx::PxVec4*>(end));
 
-  shared_ptr<Cloth> cloth =
+  auto cloth =
       make_shared<Cloth>(impl_->createCloth(range, *fabric->get()), fabric);
 
   // TODO(daniel): how should users take advantage of this?
