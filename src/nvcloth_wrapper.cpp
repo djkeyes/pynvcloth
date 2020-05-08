@@ -3,8 +3,10 @@
 #include <memory>
 #include <vector>
 
+#include <Eigen/Core>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl_bind.h>
+#include <pybind11/eigen.h>
 
 #include <NvCloth/Cloth.h>
 #include <NvCloth/Fabric.h>

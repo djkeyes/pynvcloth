@@ -23,6 +23,8 @@ set(NV_CLOTH_ENABLE_CUDA 0)
 set(NV_CLOTH_ENABLE_DX11 1)
 add_subdirectory(${NVCLOTH_ROOT_DIR}/compiler/cmake/windows "${CMAKE_CURRENT_BINARY_DIR}/NvCloth_bin")
 
+find_package (Eigen3 3.3 REQUIRED NO_MODULE)
+
 # Specify the build targets
 add_executable(hello_nvcloth
         src/hello_nvcloth.cpp
@@ -36,8 +38,7 @@ target_include_directories(hello_nvcloth
         PRIVATE ${NVCLOTH_ROOT_DIR}/include
         PRIVATE ${NVCLOTH_ROOT_DIR}/extensions/include)
 target_link_libraries(hello_nvcloth
-       PUBLIC d3dcompiler.lib d3d11.lib dxgi.lib comctl32.lib)
-target_link_libraries(hello_nvcloth PUBLIC NvCloth)
+       PUBLIC d3dcompiler.lib d3d11.lib dxgi.lib comctl32.lib NvCloth)
 
 add_subdirectory(external/pybind11)
 pybind11_add_module(example
@@ -56,5 +57,4 @@ target_include_directories(pynvcloth
         PRIVATE ${NVCLOTH_ROOT_DIR}/include
         PRIVATE ${NVCLOTH_ROOT_DIR}/extensions/include)
 target_link_libraries(pynvcloth
-       PUBLIC d3dcompiler.lib d3d11.lib dxgi.lib comctl32.lib)
-target_link_libraries(pynvcloth PUBLIC NvCloth)
+       PUBLIC d3dcompiler.lib d3d11.lib dxgi.lib comctl32.lib NvCloth Eigen3::Eigen)
