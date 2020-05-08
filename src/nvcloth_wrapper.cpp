@@ -45,68 +45,16 @@ namespace py = pybind11;
  * factory to be released until the fabric itself is released.
  */
 
-template <typename T>
-struct LifecycleLogger {
-  LifecycleLogger() {
-    using std::cout;
-    using std::endl;
-    cout << "Default-constructed an object bound to type `" << typeid(T).name()
-         << "`." << endl;
-  }
-  LifecycleLogger(const LifecycleLogger&) {
-    using std::cout;
-    using std::endl;
-    cout << "Copy-constructed an object bound to type `" << typeid(T).name()
-         << "`." << endl;
-  }
-  LifecycleLogger(LifecycleLogger&&) noexcept {
-    using std::cout;
-    using std::endl;
-    cout << "Move-constructed an object bound to type `" << typeid(T).name()
-         << "`." << endl;
-  }
-  LifecycleLogger& operator=(const LifecycleLogger&) {
-    using std::cout;
-    using std::endl;
-    cout << "Copy-assigned an object bound to type `" << typeid(T).name()
-         << "`." << endl;
-    return *this;
-  }
-  LifecycleLogger& operator=(LifecycleLogger&&) noexcept {
-    using std::cout;
-    using std::endl;
-    cout << "Move-assigned an object bound to type `" << typeid(T).name()
-         << "`." << endl;
-    return *this;
-  }
-  ~LifecycleLogger() {
-    using std::cout;
-    using std::endl;
-    cout << "Destructed an object bound to type `" << typeid(T).name() << "`."
-         << endl;
-  }
-};
-
 /**
  * RAII wrapper for environment setup and teardown
  */
 struct NvClothEnv {
-  NvClothEnv() {
-    NvClothEnvironment::AllocateEnv();
-    using std::cout;
-    using std::endl;
-    cout << "Alloc'd nvcloth environment!" << endl;
-  }
+  NvClothEnv() { NvClothEnvironment::AllocateEnv(); }
   NvClothEnv(const NvClothEnv&) = delete;
   NvClothEnv(NvClothEnv&&) = delete;
   NvClothEnv& operator=(const NvClothEnv&) = delete;
   NvClothEnv& operator=(NvClothEnv&&) = delete;
-  ~NvClothEnv() {
-    using std::cout;
-    using std::endl;
-    cout << "Freed nvcloth environment!" << endl;
-    NvClothEnvironment::FreeEnv();
-  }
+  ~NvClothEnv() { NvClothEnvironment::FreeEnv(); }
 };
 
 // manage the environment via reference counting
@@ -129,8 +77,6 @@ class DxContextManager {
 
  private:
   unique_ptr<DxContextManagerCallbackImpl> impl_;
-
-  LifecycleLogger<DxContextManager> logger_;
 };
 
 auto create_dx11_context_manager() {
@@ -179,8 +125,6 @@ class Factory {
   shared_ptr<DxContextManager> directx_context_manager_;
 
   unique_ptr<nv::cloth::Factory, FactoryDeleter> impl_;
-
-  LifecycleLogger<Factory> logger_;
 };
 
 struct FabricDeleter {
@@ -199,8 +143,6 @@ class Fabric {
   shared_ptr<Factory> factory_;
 
   unique_ptr<nv::cloth::Fabric, FabricDeleter> impl_;
-
-  LifecycleLogger<Fabric> logger;
 };
 
 struct ClothDeleter {
@@ -219,8 +161,6 @@ class Cloth {
   shared_ptr<Fabric> fabric_;
 
   unique_ptr<nv::cloth::Cloth, ClothDeleter> impl_;
-
-  LifecycleLogger<Cloth> logger;
 };
 
 struct SolverDeleter {
@@ -230,8 +170,7 @@ struct SolverDeleter {
 class Solver {
  public:
   Solver() : impl_(nullptr) {}
-  explicit Solver(nv::cloth::Solver* const impl)
-      : impl_(impl) {}
+  explicit Solver(nv::cloth::Solver* const impl) : impl_(impl) {}
 
   Solver(const Solver&) = delete;
   Solver(Solver&&) = default;
@@ -256,18 +195,9 @@ class Solver {
   }
 
  private:
-  struct B {};
-  LifecycleLogger<B> loggerB;
   unique_ptr<nv::cloth::Solver, SolverDeleter> impl_;
 
-  struct A {};
-  LifecycleLogger<A> loggerA;
   std::unordered_set<shared_ptr<Cloth>> cloths_;
-
-  struct C {};
-  LifecycleLogger<C> loggerC;
-
-  LifecycleLogger<Solver> logger;
 };
 
 // We are using unique_ptr to enforce custom deleters, so don't let pybind11 try
