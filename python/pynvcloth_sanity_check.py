@@ -11,7 +11,7 @@ import trimesh
 from trimesh.viewer import SceneViewer
 import pyglet
 
-# The NvCloth environment must be setup (and destroyed) explicitly.
+# The NvCloth environment must be set up explicitly.
 # daniel: This doesn't seem very python-like. Can we do this implicitly?
 nvc.allocate_env()
 
@@ -22,7 +22,10 @@ print(type(null_factory))
 factory = nvc.create_factory_cpu()
 print(type(factory))
 
-# Note: resources need to be explicitly freed. We could also control this with function scoping
+# Note: resources can be explicitly freed, or managed by python's garbage 
+# collector (on the c++ side, resources are managed by reference counting,
+# so it should play well with the GC). We could also control this with 
+# function scoping.
 del null_factory
 
 del factory
@@ -134,4 +137,5 @@ del fabric
 del factory
 del device_manager
 
+# This isn't necessary, but you can free up reasources early if you need.
 nvc.free_env()

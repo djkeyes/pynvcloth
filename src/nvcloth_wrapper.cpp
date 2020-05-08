@@ -16,6 +16,8 @@
 
 #include "CallbackImplementations.h"
 
+using std::make_shared;
+using std::shared_ptr;
 using std::unique_ptr;
 using std::vector;
 
@@ -24,39 +26,257 @@ using nv::cloth::ClothMeshDesc;
 
 namespace py = pybind11;
 
+/**
+ * A note on resource ownership:
+ *
+ * Since this interfaces with Python, which uses a garbage-collected memory
+ * manager, it's difficult to apply strict rules for single-object ownership
+ * using, e.g., unique_ptr. Instead, most functions in this API return a
+ * reference-counted shared_ptr, and and deallocation is handled by the last
+ * owner of a resource. For this to work, we need to ensure there are no cycles
+ * in ownership. Here is a DAG describing ownership among types. Arrows denote
+ * has-a relationships, and * arrows denote has-many.
+ *
+ * NvClothEnv <- Factory <- Fabric <- Cloth <*- Solver
+ *
+ * DirectX Context <- DirectX Factory
+ *
+ * For example, a Fabric keeps a handle to its factory, and does not allow its
+ * factory to be released until the fabric itself is released.
+ */
+
+template <typename T>
+struct LifecycleLogger {
+  LifecycleLogger() {
+    using std::cout;
+    using std::endl;
+    cout << "Default-constructed an object bound to type `" << typeid(T).name()
+         << "`." << endl;
+  }
+  LifecycleLogger(const LifecycleLogger&) {
+    using std::cout;
+    using std::endl;
+    cout << "Copy-constructed an object bound to type `" << typeid(T).name()
+         << "`." << endl;
+  }
+  LifecycleLogger(LifecycleLogger&&) noexcept {
+    using std::cout;
+    using std::endl;
+    cout << "Move-constructed an object bound to type `" << typeid(T).name()
+         << "`." << endl;
+  }
+  LifecycleLogger& operator=(const LifecycleLogger&) {
+    using std::cout;
+    using std::endl;
+    cout << "Copy-assigned an object bound to type `" << typeid(T).name()
+         << "`." << endl;
+    return *this;
+  }
+  LifecycleLogger& operator=(LifecycleLogger&&) noexcept {
+    using std::cout;
+    using std::endl;
+    cout << "Move-assigned an object bound to type `" << typeid(T).name()
+         << "`." << endl;
+    return *this;
+  }
+  ~LifecycleLogger() {
+    using std::cout;
+    using std::endl;
+    cout << "Destructed an object bound to type `" << typeid(T).name() << "`."
+         << endl;
+  }
+};
+
+/**
+ * RAII wrapper for environment setup and teardown
+ */
+struct NvClothEnv {
+  NvClothEnv() {
+    NvClothEnvironment::AllocateEnv();
+    using std::cout;
+    using std::endl;
+    cout << "Alloc'd nvcloth environment!" << endl;
+  }
+  NvClothEnv(const NvClothEnv&) = delete;
+  NvClothEnv(NvClothEnv&&) = delete;
+  NvClothEnv& operator=(const NvClothEnv&) = delete;
+  NvClothEnv& operator=(NvClothEnv&&) = delete;
+  ~NvClothEnv() {
+    using std::cout;
+    using std::endl;
+    cout << "Freed nvcloth environment!" << endl;
+    NvClothEnvironment::FreeEnv();
+  }
+};
+
+// manage the environment via reference counting
+static shared_ptr<NvClothEnv> nv_cloth_env;
+
+void allocate_env() {
+  nv_cloth_env.reset(new NvClothEnv);
+}
+
+void free_env() {
+  nv_cloth_env.reset();
+}
+
+class DxContextManager {
+ public:
+  DxContextManager() : impl_(nullptr) {}
+  DxContextManager(DxContextManagerCallbackImpl* const impl) : impl_(impl) {}
+
+  auto get() const { return impl_.get(); }
+
+ private:
+  unique_ptr<DxContextManagerCallbackImpl> impl_;
+
+  LifecycleLogger<DxContextManager> logger_;
+};
+
+auto create_dx11_context_manager() {
+  // This is a little sloppy -- for directx, we need something that owns both
+  // the device and the factory.
+  ID3D11Device* device;
+  ID3D11DeviceContext* context;
+  const auto feature_level = D3D_FEATURE_LEVEL_11_0;
+  D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+                    &feature_level, 1, D3D11_SDK_VERSION, &device, nullptr,
+                    &context);
+  return make_shared<DxContextManager>(
+      new DxContextManagerCallbackImpl(device, false));
+}
+
 struct FactoryDeleter {
   void operator()(nv::cloth::Factory* const factory) const {
     NvClothDestroyFactory(factory);
   }
 };
 
-using Factory = unique_ptr<nv::cloth::Factory, FactoryDeleter>;
+class Factory {
+ public:
+  Factory() : directx_context_manager_(nullptr), impl_(nullptr) {}
+
+  static auto create_factory_cpu() {
+    return make_shared<Factory>(NvClothCreateFactoryCPU());
+  }
+
+  static auto create_factory_dx11(
+      shared_ptr<DxContextManager> context_manager) {
+    const auto f = NvClothCreateFactoryDX11(context_manager.get()->get());
+    return make_shared<Factory>(f, std::move(context_manager));
+  }
+
+  nv::cloth::Factory* get() const { return impl_.get(); };
+
+  explicit Factory(nv::cloth::Factory* const impl)
+      : directx_context_manager_(nullptr), impl_(impl) {}
+  explicit Factory(nv::cloth::Factory* const impl,
+                   shared_ptr<DxContextManager> context_manager)
+      : directx_context_manager_(std::move(context_manager)), impl_(impl) {}
+
+ private:
+  shared_ptr<NvClothEnv> env_;
+  shared_ptr<DxContextManager> directx_context_manager_;
+
+  unique_ptr<nv::cloth::Factory, FactoryDeleter> impl_;
+
+  LifecycleLogger<Factory> logger_;
+};
 
 struct FabricDeleter {
   void operator()(nv::cloth::Fabric* const f) const { f->decRefCount(); }
 };
 
-using Fabric = unique_ptr<nv::cloth::Fabric, FabricDeleter>;
+class Fabric {
+ public:
+  Fabric() : factory_(nullptr), impl_(nullptr) {}
+  Fabric(nv::cloth::Fabric* const impl, shared_ptr<Factory> factory)
+      : factory_(std::move(factory)), impl_(impl) {}
+
+  auto get() const { return impl_.get(); }
+
+ private:
+  shared_ptr<Factory> factory_;
+
+  unique_ptr<nv::cloth::Fabric, FabricDeleter> impl_;
+
+  LifecycleLogger<Fabric> logger;
+};
 
 struct ClothDeleter {
   void operator()(nv::cloth::Cloth* const c) const { NV_CLOTH_DELETE(c); }
 };
 
-using Cloth = unique_ptr<nv::cloth::Cloth, ClothDeleter>;
+class Cloth {
+ public:
+  Cloth() : fabric_(nullptr), impl_(nullptr) {}
+  Cloth(nv::cloth::Cloth* const impl, shared_ptr<Fabric> fabric)
+      : fabric_(std::move(fabric)), impl_(impl) {}
+
+  auto get() const { return impl_.get(); }
+
+ private:
+  shared_ptr<Fabric> fabric_;
+
+  unique_ptr<nv::cloth::Cloth, ClothDeleter> impl_;
+
+  LifecycleLogger<Cloth> logger;
+};
 
 struct SolverDeleter {
   void operator()(nv::cloth::Solver* const s) const { NV_CLOTH_DELETE(s); }
 };
 
-using Solver = unique_ptr<nv::cloth::Solver, SolverDeleter>;
+class Solver {
+ public:
+  Solver() : impl_(nullptr) {}
+  explicit Solver(nv::cloth::Solver* const impl)
+      : impl_(impl) {}
+
+  Solver(const Solver&) = delete;
+  Solver(Solver&&) = default;
+  Solver& operator=(const Solver&) = delete;
+  Solver& operator=(Solver&&) = default;
+  ~Solver() {
+    // Automatically remove dangling cloths, in case users forgot
+    for (const auto cloth : cloths_) {
+      impl_->removeCloth(cloth->get());
+    }
+  }
+
+  auto get() const { return impl_.get(); }
+
+  void add_cloth(shared_ptr<Cloth> cloth) {
+    impl_->addCloth(cloth->get());
+    cloths_.emplace(std::move(cloth));
+  }
+  void remove_cloth(const shared_ptr<Cloth>& cloth) {
+    impl_->removeCloth(cloth->get());
+    cloths_.erase(cloth);
+  }
+
+ private:
+  struct B {};
+  LifecycleLogger<B> loggerB;
+  unique_ptr<nv::cloth::Solver, SolverDeleter> impl_;
+
+  struct A {};
+  LifecycleLogger<A> loggerA;
+  std::unordered_set<shared_ptr<Cloth>> cloths_;
+
+  struct C {};
+  LifecycleLogger<C> loggerC;
+
+  LifecycleLogger<Solver> logger;
+};
 
 // We are using unique_ptr to enforce custom deleters, so don't let pybind11 try
 // to extract out the raw pointers.
-PYBIND11_MAKE_OPAQUE(Factory);
-PYBIND11_MAKE_OPAQUE(Fabric);
-PYBIND11_MAKE_OPAQUE(Cloth);
-PYBIND11_MAKE_OPAQUE(Solver);
-PYBIND11_MAKE_OPAQUE(std::unique_ptr<DxContextManagerCallbackImpl>);
+// PYBIND11_MAKE_OPAQUE(Factory);
+// PYBIND11_MAKE_OPAQUE(Fabric);
+// PYBIND11_MAKE_OPAQUE(Cloth);
+// PYBIND11_MAKE_OPAQUE(Solver);
+// PYBIND11_MAKE_OPAQUE(std::unique_ptr<DXC>);
 
 struct Triangle {
   Triangle() : a(0), b(0), c(0) {}
@@ -75,27 +295,6 @@ struct Quad {
 
   uint32_t a, b, c, d;
 };
-
-auto create_factory_cpu() {
-  return Factory(NvClothCreateFactoryCPU());
-}
-
-auto create_dx11_context_manager() {
-  // This is a little sloppy -- for directx, we need something that owns both
-  // the device and the factory.
-  ID3D11Device* device;
-  ID3D11DeviceContext* context;
-  const auto feature_level = D3D_FEATURE_LEVEL_11_0;
-  D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
-                    &feature_level, 1, D3D11_SDK_VERSION, &device, nullptr,
-                    &context);
-  return std::make_unique<DxContextManagerCallbackImpl>(device, false);
-}
-
-auto create_factory_dx11(
-    const std::unique_ptr<DxContextManagerCallbackImpl>& context_manager) {
-  return Factory(NvClothCreateFactoryDX11(context_manager.get()));
-}
 
 // We need to be able to pass in arrays with C++-managed memory (since
 // BoundedData requires a long-lived pointer to contiguous memory).
@@ -117,13 +316,15 @@ auto bounded_data_view(const vector<T>& vec) {
   return result;
 }
 
-Fabric cook_fabric_from_mesh(const Factory& factory,
+Fabric cook_fabric_from_mesh(shared_ptr<Factory> factory,
                              const ClothMeshDesc& desc,
                              const physx::PxVec3& gravity,
                              const bool use_geodesic_tether) {
   // TODO(daniel): is phaseTypes important? currently just throwing it away.
-  return Fabric(NvClothCookFabricFromMesh(factory.get(), desc, gravity, nullptr,
-                                          use_geodesic_tether));
+  const auto ptr = factory->get();
+  return Fabric(NvClothCookFabricFromMesh(ptr, desc, gravity, nullptr,
+                                          use_geodesic_tether),
+                std::move(factory));
 }
 
 void set_collision_mesh(Cloth& c,
@@ -140,105 +341,120 @@ void set_collision_mesh(Cloth& c,
   }
   const nv::cloth::Range<physx::PxVec3> range(
       split_triangles.data(), split_triangles.data() + split_triangles.size());
-  c->setTriangles(range, 0, c->getNumTriangles());
+  c.get()->setTriangles(range, 0, c.get()->getNumTriangles());
 }
 
 PYBIND11_MODULE(pynvcloth, m) {
   m.doc() = "A python wrapper around NvCloth";
 
-  m.def("allocate_env", &NvClothEnvironment::AllocateEnv,
+  m.def("allocate_env", &::allocate_env,
         "Initialize the NvCloth library and register necessary handlers.");
-  m.def("free_env", &NvClothEnvironment::FreeEnv,
-        "De-initialize the NvCloth library.");
+  m.def("free_env", &::free_env, "De-initialize the NvCloth library.");
 
-  py::class_<Factory>(m, "Factory")
+  py::class_<Factory, shared_ptr<Factory>>(m, "Factory")
       .def(py::init<>())
       .def("create_cloth",
            [](Factory& factory, vector<physx::PxVec4>& particle_positions,
-              Fabric& fabric) {
-             Cloth cloth(factory->createCloth(
-                 nv::cloth::Range<physx::PxVec4>(
-                     particle_positions.data(),
-                     particle_positions.data() + particle_positions.size()),
-                 *fabric));
+              shared_ptr<Fabric> fabric) {
+             Cloth cloth(
+                 factory.get()->createCloth(
+                     nv::cloth::Range<physx::PxVec4>(
+                         particle_positions.data(),
+                         particle_positions.data() + particle_positions.size()),
+                     *fabric->get()),
+                 fabric);
 
              // TODO(daniel): how should users take advantage of this?
-             vector<nv::cloth::PhaseConfig> phases(fabric->getNumPhases());
-             for (uint32_t i = 0; i < fabric->getNumPhases(); i++) {
+             vector<nv::cloth::PhaseConfig> phases(
+                 fabric->get()->getNumPhases());
+             for (uint32_t i = 0; i < fabric->get()->getNumPhases(); i++) {
                phases[i].mPhaseIndex = i;
                phases[i].mStiffness = 1.0f;
                phases[i].mStiffnessMultiplier = 1.0f;
                phases[i].mCompressionLimit = 1.0f;
                phases[i].mStretchLimit = 1.0f;
              }
-             cloth->setPhaseConfig(nv::cloth::Range<nv::cloth::PhaseConfig>(
-                 phases.data(), phases.data() + fabric->getNumPhases()));
+             cloth.get()->setPhaseConfig(
+                 nv::cloth::Range<nv::cloth::PhaseConfig>(
+                     phases.data(),
+                     phases.data() + fabric->get()->getNumPhases()));
              return cloth;
            })
-      .def("create_solver",
-           [](Factory& factory) { return Solver(factory->createSolver()); });
+      .def("create_solver", [](Factory& factory) {
+        return Solver(factory.get()->createSolver());
+      });
 
-  m.def("create_factory_cpu", &create_factory_cpu);
+  m.def("create_factory_cpu", &Factory::create_factory_cpu);
 
-  (void)py::class_<std::unique_ptr<DxContextManagerCallbackImpl>>(
+  (void)py::class_<DxContextManager, shared_ptr<DxContextManager>>(
       m, "DirectX11ContextManager");
 
   m.def("create_dx11_context_manager", &create_dx11_context_manager);
-  m.def("create_factory_dx11", &create_factory_dx11);
+  m.def("create_factory_dx11", &Factory::create_factory_dx11);
 
-  py::class_<Fabric>(m, "Fabric").def(py::init<>());
-  py::class_<Cloth>(m, "Cloth")
+  py::class_<Fabric, shared_ptr<Fabric>>(m, "Fabric").def(py::init<>());
+  py::class_<Cloth, shared_ptr<Cloth>>(m, "Cloth")
       .def(py::init<>())
       .def("set_solver_frequency",
-           [](Cloth& c, const float t) { c->setSolverFrequency(t); })
+           [](Cloth& c, const float t) { c.get()->setSolverFrequency(t); })
       .def("set_gravity",
            [](Cloth& c, const physx::PxVec3& gravity) {
-             c->setGravity(gravity);
+             c.get()->setGravity(gravity);
            })
       .def("set_lift_coefficient",
-           [](Cloth& c, const float coeff) { c->setLiftCoefficient(coeff); })
+           [](Cloth& c, const float coeff) {
+             c.get()->setLiftCoefficient(coeff);
+           })
       .def("set_drag_coefficient",
-           [](Cloth& c, const float coeff) { c->setDragCoefficient(coeff); })
+           [](Cloth& c, const float coeff) {
+             c.get()->setDragCoefficient(coeff);
+           })
       .def("set_friction",
-           [](Cloth& c, const float coeff) { c->setFriction(coeff); })
+           [](Cloth& c, const float coeff) { c.get()->setFriction(coeff); })
       .def("set_collision_mesh", &set_collision_mesh)
-      .def("clear_inertia", [](Cloth& c) { c->clearInertia(); })
+      .def("clear_inertia", [](Cloth& c) { c.get()->clearInertia(); })
       .def("set_damping",
-           [](Cloth& c, const physx::PxVec3& v) { c->setDamping(v); })
+           [](Cloth& c, const physx::PxVec3& v) { c.get()->setDamping(v); })
       .def("set_linear_drag",
-           [](Cloth& c, const physx::PxVec3& v) { c->setLinearDrag(v); })
+           [](Cloth& c, const physx::PxVec3& v) { c.get()->setLinearDrag(v); })
       .def("set_angular_drag",
-           [](Cloth& c, const physx::PxVec3& v) { c->setAngularDrag(v); })
+           [](Cloth& c, const physx::PxVec3& v) { c.get()->setAngularDrag(v); })
       .def("set_linear_inertia",
-           [](Cloth& c, const physx::PxVec3& v) { c->setLinearInertia(v); })
+           [](Cloth& c, const physx::PxVec3& v) {
+             c.get()->setLinearInertia(v);
+           })
       .def("set_angular_inertia",
-           [](Cloth& c, const physx::PxVec3& v) { c->setAngularInertia(v); })
-      .def(
-          "set_centrifugal_inertia",
-          [](Cloth& c, const physx::PxVec3& v) { c->setCentrifugalInertia(v); })
+           [](Cloth& c, const physx::PxVec3& v) {
+             c.get()->setAngularInertia(v);
+           })
+      .def("set_centrifugal_inertia",
+           [](Cloth& c, const physx::PxVec3& v) {
+             c.get()->setCentrifugalInertia(v);
+           })
       .def("set_stiffness_frequency",
-           [](Cloth& c, const float f) { c->setStiffnessFrequency(f); })
-      .def("enable_continuous_collision",
-           [](Cloth& c, const bool b) { c->enableContinuousCollision(b); })
+           [](Cloth& c, const float f) { c.get()->setStiffnessFrequency(f); })
+      .def(
+          "enable_continuous_collision",
+          [](Cloth& c, const bool b) { c.get()->enableContinuousCollision(b); })
       .def("set_collision_mass_scale",
-           [](Cloth& c, const float f) { c->setCollisionMassScale(f); })
+           [](Cloth& c, const float f) { c.get()->setCollisionMassScale(f); })
       .def("clear_particle_accelerations",
-           [](Cloth& c) { c->clearParticleAccelerations(); })
+           [](Cloth& c) { c.get()->clearParticleAccelerations(); })
       .def("get_current_particles", [](Cloth& c) {
-        const auto particles = c->getCurrentParticles();
+        const auto particles = c.get()->getCurrentParticles();
         // copy and return result
         return vector<physx::PxVec4>(particles.begin(), particles.end());
       });
-  py::class_<Solver>(m, "Solver")
+  py::class_<Solver, shared_ptr<Solver>>(m, "Solver")
       .def(py::init<>())
-      .def("add_cloth", [](Solver& s, Cloth& c) { s->addCloth(c.get()); })
-      .def("remove_cloth", [](Solver& s, Cloth& c) { s->removeCloth(c.get()); })
+      .def("add_cloth", &Solver::add_cloth)
+      .def("remove_cloth", &Solver::remove_cloth)
       .def("simulate", [](Solver& s, const float dt) {
-        s->beginSimulation(dt);
-        for (int i = 0; i < s->getSimulationChunkCount(); i++) {
-          s->simulateChunk(i);
+        s.get()->beginSimulation(dt);
+        for (int i = 0; i < s.get()->getSimulationChunkCount(); i++) {
+          s.get()->simulateChunk(i);
         }
-        s->endSimulation();
+        s.get()->endSimulation();
       });
 
   py::class_<Triangle>(m, "Triangle")
