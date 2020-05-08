@@ -3,10 +3,10 @@
 #include <memory>
 #include <vector>
 
-#include <Eigen/Core>
+#include <pybind11/eigen.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl_bind.h>
-#include <pybind11/eigen.h>
+#include <Eigen/Core>
 
 #include <NvCloth/Cloth.h>
 #include <NvCloth/Fabric.h>
@@ -27,6 +27,15 @@ using nv::cloth::BoundedData;
 using nv::cloth::ClothMeshDesc;
 
 namespace py = pybind11;
+
+using MatX4f = Eigen::Matrix<float, Eigen::Dynamic, 4, Eigen::RowMajor>;
+using MatX3f = Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor>;
+using MatXf =
+    Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+using MatX4i = Eigen::Matrix<int32_t, Eigen::Dynamic, 4, Eigen::RowMajor>;
+using MatX3i = Eigen::Matrix<int32_t, Eigen::Dynamic, 3, Eigen::RowMajor>;
+using MatXi =
+    Eigen::Matrix<int32_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
 /**
  * A note on resource ownership:
@@ -118,7 +127,7 @@ class Factory {
     return make_shared<Factory>(f, std::move(context_manager));
   }
 
-  shared_ptr<Cloth> create_cloth(vector<physx::PxVec4>& particle_positions,
+  shared_ptr<Cloth> create_cloth(MatX4f& particle_positions,
                                  shared_ptr<Fabric> fabric);
   shared_ptr<Solver> create_solver();
 
@@ -199,8 +208,10 @@ class Cloth {
   void clear_particle_accelerations() { impl_->clearParticleAccelerations(); }
   auto get_current_particles() {
     const auto particles = impl_->getCurrentParticles();
+    Eigen::Map<MatX4f> result(reinterpret_cast<float*>(particles.begin()),
+                              particles.size(), 4);
     // copy and return result
-    return vector<physx::PxVec4>(particles.begin(), particles.end());
+    return result;
   }
 
   auto get() const { return impl_.get(); }
@@ -256,16 +267,16 @@ class Solver {
   std::unordered_set<shared_ptr<Cloth>> cloths_;
 };
 
-shared_ptr<Cloth> Factory::create_cloth(
-    vector<physx::PxVec4>& particle_positions,
-    shared_ptr<Fabric> fabric) {
-  shared_ptr<Cloth> cloth = make_shared<Cloth>(
-      impl_->createCloth(
-          nv::cloth::Range<physx::PxVec4>(
-              particle_positions.data(),
-              particle_positions.data() + particle_positions.size()),
-          *fabric->get()),
-      fabric);
+shared_ptr<Cloth> Factory::create_cloth(MatX4f& particle_positions,
+                                        shared_ptr<Fabric> fabric) {
+  const auto begin = particle_positions.data();
+  const auto end = begin + particle_positions.size();
+  const nv::cloth::Range<physx::PxVec4> range(
+      reinterpret_cast<physx::PxVec4*>(begin),
+      reinterpret_cast<physx::PxVec4*>(end));
+
+  shared_ptr<Cloth> cloth =
+      make_shared<Cloth>(impl_->createCloth(range, *fabric->get()), fabric);
 
   // TODO(daniel): how should users take advantage of this?
   vector<nv::cloth::PhaseConfig> phases(fabric->get()->getNumPhases());
@@ -285,41 +296,14 @@ shared_ptr<Solver> Factory::create_solver() {
   return make_shared<Solver>(impl_->createSolver());
 }
 
-struct Triangle {
-  Triangle() : a(0), b(0), c(0) {}
-
-  Triangle(const uint32_t a, const uint32_t b, const uint32_t c)
-      : a(a), b(b), c(c) {}
-
-  uint32_t a, b, c;
-};
-
-struct Quad {
-  Quad() : a(0), b(0), c(0), d(0) {}
-
-  Quad(const uint32_t a, const uint32_t b, const uint32_t c, const uint32_t d)
-      : a(a), b(b), c(c), d(d) {}
-
-  uint32_t a, b, c, d;
-};
-
-// We need to be able to pass in arrays with C++-managed memory (since
-// BoundedData requires a long-lived pointer to contiguous memory).
-// Therefore, create opaque types for vector, and use bind_vector later to
-// emulate vector functions in python
-PYBIND11_MAKE_OPAQUE(vector<Triangle>);
-PYBIND11_MAKE_OPAQUE(vector<Quad>);
-PYBIND11_MAKE_OPAQUE(vector<float>);
-PYBIND11_MAKE_OPAQUE(vector<int32_t>);
-PYBIND11_MAKE_OPAQUE(vector<physx::PxVec3>);
-PYBIND11_MAKE_OPAQUE(vector<physx::PxVec4>);
-
-template <typename T>
-auto bounded_data_view(const vector<T>& vec) {
+template <typename MatrixT>
+auto bounded_data_view(const Eigen::Ref<MatrixT>& mat) {
+  // Note: this assumes a row-major ordering
   BoundedData result;
-  result.count = static_cast<physx::PxU32>(vec.size());
-  result.stride = sizeof(T);
-  result.data = vec.data();
+  result.count = static_cast<physx::PxU32>(mat.rows());
+  result.stride = static_cast<physx::PxU32>(mat.rowStride() *
+                                            sizeof(typename MatrixT::Scalar));
+  result.data = mat.data();
   return result;
 }
 
@@ -335,19 +319,23 @@ Fabric cook_fabric_from_mesh(shared_ptr<Factory> factory,
 }
 
 void set_collision_mesh(Cloth& c,
-                        const vector<Triangle>& triangles,
-                        const vector<physx::PxVec3>& vertices) {
+                        const Eigen::Ref<MatX3i>& triangles,
+                        const Eigen::Ref<MatX3f>& vertices) {
   // NvCloth expects separate triangles, so we really do have to make some
   // copies here.
-  vector<physx::PxVec3> split_triangles(triangles.size() * 3);
-  for (size_t i = 0; i < triangles.size(); ++i) {
-    const auto& tri = triangles[i];
-    split_triangles[3ULL * i + 0ULL] = vertices[tri.a];
-    split_triangles[3ULL * i + 1ULL] = vertices[tri.b];
-    split_triangles[3ULL * i + 2ULL] = vertices[tri.c];
+  MatX3f split_triangles(triangles.size() * 3, 3);
+  for (int i = 0; i < triangles.rows(); ++i) {
+    const auto& tri = triangles.row(i);
+    split_triangles.row(3ULL * i + 0ULL) = vertices.row(tri[0]);
+    split_triangles.row(3ULL * i + 1ULL) = vertices.row(tri[1]);
+    split_triangles.row(3ULL * i + 2ULL) = vertices.row(tri[2]);
   }
+  const auto begin = split_triangles.data();
+  const auto end = begin + split_triangles.size();
   const nv::cloth::Range<physx::PxVec3> range(
-      split_triangles.data(), split_triangles.data() + split_triangles.size());
+      reinterpret_cast<physx::PxVec3*>(begin),
+      reinterpret_cast<physx::PxVec3*>(end));
+
   c.get()->setTriangles(range, 0, c.get()->getNumTriangles());
 }
 
@@ -399,21 +387,6 @@ PYBIND11_MODULE(pynvcloth, m) {
       .def("remove_cloth", &Solver::remove_cloth)
       .def("simulate", &Solver::simulate);
 
-  py::class_<Triangle>(m, "Triangle")
-      .def(py::init<>())
-      .def(py::init<uint32_t, uint32_t, uint32_t>())
-      .def_readwrite("a", &Triangle::a)
-      .def_readwrite("b", &Triangle::b)
-      .def_readwrite("c", &Triangle::c);
-
-  py::class_<Quad>(m, "Quad")
-      .def(py::init<>())
-      .def(py::init<uint32_t, uint32_t, uint32_t, uint32_t>())
-      .def_readwrite("a", &Quad::a)
-      .def_readwrite("b", &Quad::b)
-      .def_readwrite("c", &Quad::c)
-      .def_readwrite("c", &Quad::c);
-
   py::class_<physx::PxVec3>(m, "Vec3")
       .def(py::init<>())
       .def(py::init<float, float, float>())
@@ -421,31 +394,10 @@ PYBIND11_MODULE(pynvcloth, m) {
       .def_readwrite("y", &physx::PxVec3::y)
       .def_readwrite("z", &physx::PxVec3::z);
 
-  py::class_<physx::PxVec4>(m, "Vec4")
-      .def(py::init<>())
-      .def(py::init<float, float, float, float>())
-      .def(py::init<physx::PxVec3, float>())
-      .def_readwrite("x", &physx::PxVec4::x)
-      .def_readwrite("y", &physx::PxVec4::y)
-      .def_readwrite("z", &physx::PxVec4::z)
-      .def_readwrite("w", &physx::PxVec4::w);
-
   py::class_<BoundedData>(m, "BoundedData").def(py::init<>());
 
-  // (void) to suppress warning C26444 on MSVC
-  (void)py::bind_vector<vector<Triangle>>(m, "VectorTri");
-  (void)py::bind_vector<vector<Quad>>(m, "VectorQuad");
-  (void)py::bind_vector<vector<float>>(m, "VectorFloat");
-  (void)py::bind_vector<vector<int32_t>>(m, "VectorInt");
-  (void)py::bind_vector<vector<physx::PxVec3>>(m, "VectorNx3");
-  (void)py::bind_vector<vector<physx::PxVec4>>(m, "VectorNx4");
-
-  m.def("as_bounded_data", &bounded_data_view<Triangle>);
-  m.def("as_bounded_data", &bounded_data_view<Quad>);
-  m.def("as_bounded_data", &bounded_data_view<float>);
-  m.def("as_bounded_data", &bounded_data_view<int32_t>);
-  m.def("as_bounded_data", &bounded_data_view<physx::PxVec3>);
-  m.def("as_bounded_data", &bounded_data_view<physx::PxVec4>);
+  m.def("as_bounded_data", &bounded_data_view<MatXf>);
+  m.def("as_bounded_data", &bounded_data_view<MatXi>);
 
   py::class_<ClothMeshDesc>(m, "ClothMeshDesc")
       .def(py::init<>())

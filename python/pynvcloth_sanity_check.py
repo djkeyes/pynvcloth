@@ -68,10 +68,10 @@ inv_masses[0] = 0.0  # anchor particle 0
 render_mesh = trimesh.Trimesh(vertices, faces, process=False)
 
 # Note: these must be declared as named variables so they stay in scope while the mesh is created.
-triangles = nvc.VectorTri([nvc.Triangle(f[0], f[1], f[2]) for f in faces])
-points = nvc.VectorNx3([nvc.Vec3(v[0], v[1], v[2]) for v in vertices])
-inv_masses = nvc.VectorFloat(inv_masses)
-point_masses = nvc.VectorNx4([nvc.Vec4(v, w) for (v, w) in zip(points, inv_masses)])
+triangles = np.array(faces, dtype=np.int)
+points = np.array(vertices, dtype=np.float32)
+inv_masses = np.array(inv_masses, dtype=np.float32).reshape(-1, 1)
+point_masses = np.hstack([points, inv_masses])
 
 cmd.triangles = nvc.as_bounded_data(triangles)
 cmd.points = nvc.as_bounded_data(points)
@@ -100,22 +100,21 @@ cloth.set_friction(0.1)
 box = trimesh.primitives.Box(extents=[0.4, 0.4, 0.4],
                              transform=np.hstack([np.eye(4, 3), np.array([-0.5, -0.5, 0, 1]).reshape(-1, 1)]))
 box.visual.vertex_colors = np.array([127, 127, 255])
-box_faces = nvc.VectorTri([nvc.Triangle(f[0], f[1], f[2]) for f in box.faces])
-box_verts = nvc.VectorNx3([nvc.Vec3(v[0], v[1], v[2]) for v in box.vertices])
+box_faces = np.array(box.faces, dtype=np.int)
+box_verts = np.array(box.vertices, dtype=np.float32)
 cloth.set_collision_mesh(box_faces, box_verts)
 
 
 def gen_simulation():
     while True:
         box.apply_translation(np.array([0.003, 0.0, 0.0]))
-        box_verts = nvc.VectorNx3([nvc.Vec3(v[0], v[1], v[2]) for v in box.vertices])
+        box_verts = np.array(box.vertices, dtype=np.float32)
         cloth.set_collision_mesh(box_faces, box_verts)
 
         cur_particles = cloth.get_current_particles()
-        particles_as_py = [[p.x, p.y, p.z, p.w] for p in cur_particles]
         solver.simulate(1. / 60.)
         print('updated!')
-        yield np.array(particles_as_py)[:, :3]
+        yield np.array(cur_particles[:, :3])
 
 
 simul_gen = gen_simulation()
