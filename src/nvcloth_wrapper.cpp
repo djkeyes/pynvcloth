@@ -324,7 +324,7 @@ void set_collision_mesh(Cloth& c,
                         const Eigen::Ref<MatX3f>& vertices) {
   // NvCloth expects separate triangles, so we really do have to make some
   // copies here.
-  MatX3f split_triangles(triangles.size() * 3, 3);
+  MatX3f split_triangles(triangles.rows() * 3, 3);
   for (int i = 0; i < triangles.rows(); ++i) {
     const auto& tri = triangles.row(i);
     split_triangles.row(3ULL * i + 0ULL) = vertices.row(tri[0]);
