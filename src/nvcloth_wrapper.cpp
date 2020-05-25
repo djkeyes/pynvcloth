@@ -14,6 +14,10 @@
 #include <NvCloth/Solver.h>
 #include <NvClothExt/ClothFabricCooker.h>
 
+#if NV_CLOTH_ENABLE_CUDA
+#include <cuda.h>
+#endif
+
 #if NV_CLOTH_ENABLE_DX11
 #include <d3d11.h>
 #include <d3dcommon.h>
@@ -112,6 +116,28 @@ struct DxContextManager {};
 auto create_dx11_context_manager() { return DxContextManager(); }
 #endif
 
+struct CuContextDeleter {
+  void operator()(CUctx_st* const context) const { cuCtxDestroy(context); }
+};
+
+class CuContextManager {
+ public:
+  CuContextManager() : impl_(nullptr) {}
+  explicit CuContextManager(CUctx_st* const impl) : impl_(impl) {}
+
+  auto get() const { return impl_.get(); }
+
+ private:
+  unique_ptr<CUctx_st, CuContextDeleter> impl_;
+};
+
+auto create_cuda_context_manager() {
+  cuInit(0);
+  CUctx_st* context;
+  cuCtxCreate(&context, 0, 0);
+  return make_shared<CuContextManager>(context);
+}
+
 struct FactoryDeleter {
   void operator()(nv::cloth::Factory* const factory) const {
     NvClothDestroyFactory(factory);
@@ -140,6 +166,12 @@ class Factory {
 #endif
   }
 
+  static auto create_factory_cuda(
+      shared_ptr<CuContextManager> context_manager) {
+    const auto f = NvClothCreateFactoryCUDA(context_manager->get());
+    return make_shared<Factory>(f, std::move(context_manager));
+  }
+
   shared_ptr<Cloth> create_cloth(MatX4f& particle_positions,
                                  shared_ptr<Fabric> fabric);
   shared_ptr<Solver> create_solver();
@@ -147,14 +179,24 @@ class Factory {
   nv::cloth::Factory* get() const { return impl_.get(); };
 
   explicit Factory(nv::cloth::Factory* const impl)
-      : directx_context_manager_(nullptr), impl_(impl) {}
+      : directx_context_manager_(nullptr),
+        cuda_context_manager_(nullptr),
+        impl_(impl) {}
   explicit Factory(nv::cloth::Factory* const impl,
                    shared_ptr<DxContextManager> context_manager)
-      : directx_context_manager_(std::move(context_manager)), impl_(impl) {}
+      : directx_context_manager_(std::move(context_manager)),
+        cuda_context_manager_(nullptr),
+        impl_(impl) {}
+  explicit Factory(nv::cloth::Factory* const impl,
+                   shared_ptr<CuContextManager> context_manager)
+      : directx_context_manager_(nullptr),
+        cuda_context_manager_(std::move(context_manager)),
+        impl_(impl) {}
 
  private:
   shared_ptr<NvClothEnv> env_;
   shared_ptr<DxContextManager> directx_context_manager_;
+  shared_ptr<CuContextManager> cuda_context_manager_;
 
   unique_ptr<nv::cloth::Factory, FactoryDeleter> impl_;
 };
@@ -371,6 +413,12 @@ PYBIND11_MODULE(pynvcloth, m) {
 
   m.def("create_dx11_context_manager", &create_dx11_context_manager);
   m.def("create_factory_dx11", &Factory::create_factory_dx11);
+
+  (void)py::class_<CuContextManager, shared_ptr<CuContextManager>>(
+      m, "CudaContextManager");
+
+  m.def("create_cuda_context_manager", &create_cuda_context_manager);
+  m.def("create_factory_cuda", &Factory::create_factory_cuda);
 
   py::class_<Fabric, shared_ptr<Fabric>>(m, "Fabric").def(py::init<>());
   py::class_<Cloth, shared_ptr<Cloth>>(m, "Cloth")

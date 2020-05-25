@@ -19,11 +19,13 @@ set(GW_DEPS_ROOT $ENV{GW_DEPS_ROOT})
 if(WIN32)
   set(PX_SELECT_COMPONENTS PxFoundation)
   find_package(PxShared REQUIRED)
+  find_package(Cuda 10 REQUIRED)
   find_package(NvCloth REQUIRED)
-  set(NV_CLOTH_ENABLE_CUDA 0)
+  set(NV_CLOTH_ENABLE_CUDA 1)
   set(NV_CLOTH_ENABLE_DX11 1)
   add_subdirectory(${NVCLOTH_ROOT_DIR}/compiler/cmake/windows "${CMAKE_CURRENT_BINARY_DIR}/NvCloth_bin")
 else()
+  # TODO: add cuda support here, too
   find_package(NvCloth REQUIRED)
   set(NV_CLOTH_ENABLE_CUDA 0)
   set(NV_CLOTH_ENABLE_DX11 0)
@@ -42,10 +44,11 @@ target_include_directories(hello_nvcloth
         PRIVATE ${PXSHARED_ROOT_DIR}/include/foundation
         PRIVATE ${PXSHARED_ROOT_DIR}/include
         PRIVATE ${PXSHARED_ROOT_DIR}/src/foundation/include
+        PRIVATE ${CUDA_INCLUDE_DIRS}
         PRIVATE ${NVCLOTH_ROOT_DIR}/include
         PRIVATE ${NVCLOTH_ROOT_DIR}/extensions/include)
 target_link_libraries(hello_nvcloth
-       PUBLIC d3dcompiler.lib d3d11.lib dxgi.lib comctl32.lib NvCloth)
+       PUBLIC d3dcompiler.lib d3d11.lib dxgi.lib comctl32.lib ${CUDA_LIBRARIES} NvCloth)
 
 add_subdirectory(external/pybind11)
 pybind11_add_module(example
@@ -61,7 +64,8 @@ target_include_directories(pynvcloth
         PRIVATE ${PXSHARED_ROOT_DIR}/include/foundation
         PRIVATE ${PXSHARED_ROOT_DIR}/include
         PRIVATE ${PXSHARED_ROOT_DIR}/src/foundation/include
+        PRIVATE ${CUDA_INCLUDE_DIRS}
         PRIVATE ${NVCLOTH_ROOT_DIR}/include
         PRIVATE ${NVCLOTH_ROOT_DIR}/extensions/include)
 target_link_libraries(pynvcloth
-       PUBLIC d3dcompiler.lib d3d11.lib dxgi.lib comctl32.lib NvCloth Eigen3::Eigen)
+       PUBLIC d3dcompiler.lib d3d11.lib dxgi.lib comctl32.lib ${CUDA_LIBRARIES} NvCloth Eigen3::Eigen)
