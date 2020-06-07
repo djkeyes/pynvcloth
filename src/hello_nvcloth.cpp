@@ -7,7 +7,10 @@
 #include <NvCloth/Factory.h>
 #include <NvClothExt/ClothFabricCooker.h>
 #include <PxVec3.h>
+
+#if USE_DX11
 #include <d3d11.h>
+#endif
 
 #include "CallbackImplementations.h"
 
@@ -49,10 +52,11 @@ struct Triangle {
 void run_simple_simulation(bool use_directx) {
   cout << "hello nvcloth!" << endl;
 
-  std::optional<DxContextManagerCallbackImpl> device_context_manager;
+  Factory factory(nullptr, nullptr);
 
+#if USE_DX11
   use_directx = use_directx && NvClothCompiledWithDxSupport();
-
+  std::optional<DxContextManagerCallbackImpl> device_context_manager;
   if (use_directx) {
     // This is a little sloppy -- for directx, we need something that owns both
     // the device and the factory.
@@ -66,15 +70,16 @@ void run_simple_simulation(bool use_directx) {
       exit(-1);
     }
     device_context_manager.emplace(device);
-  }
 
-  Factory factory(nullptr, nullptr);
-  if (!use_directx) {
-    factory = Factory(NvClothCreateFactoryCPU(), NvClothDestroyFactory);
-  } else {
     factory = Factory(NvClothCreateFactoryDX11(&*device_context_manager),
                       NvClothDestroyFactory);
+  } else {
+    factory = Factory(NvClothCreateFactoryCPU(), NvClothDestroyFactory);
   }
+#else
+  factory = Factory(NvClothCreateFactoryCPU(), NvClothDestroyFactory);
+#endif
+
   nv::cloth::Vector<int32_t>::Type phase_types;
 
   nv::cloth::ClothMeshDesc mesh_desc;

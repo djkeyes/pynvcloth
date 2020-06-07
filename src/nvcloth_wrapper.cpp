@@ -13,8 +13,11 @@
 #include <NvCloth/Factory.h>
 #include <NvCloth/Solver.h>
 #include <NvClothExt/ClothFabricCooker.h>
+
+#if NV_CLOTH_ENABLE_DX11
 #include <d3d11.h>
 #include <d3dcommon.h>
+#endif
 
 #include "CallbackImplementations.h"
 
@@ -79,6 +82,7 @@ void free_env() {
   nv_cloth_env.reset();
 }
 
+#if NV_CLOTH_ENABLE_DX11
 class DxContextManager {
  public:
   DxContextManager() : impl_(nullptr) {}
@@ -103,6 +107,10 @@ auto create_dx11_context_manager() {
   return make_shared<DxContextManager>(
       new DxContextManagerCallbackImpl(device, false));
 }
+#else
+struct DxContextManager {};
+auto create_dx11_context_manager() { return DxContextManager(); }
+#endif
 
 struct FactoryDeleter {
   void operator()(nv::cloth::Factory* const factory) const {
@@ -124,8 +132,12 @@ class Factory {
 
   static auto create_factory_dx11(
       shared_ptr<DxContextManager> context_manager) {
+#if NV_CLOTH_ENABLE_DX11
     const auto f = NvClothCreateFactoryDX11(context_manager->get());
     return make_shared<Factory>(f, std::move(context_manager));
+#else
+    return make_shared<Factory>(nullptr);
+#endif
   }
 
   shared_ptr<Cloth> create_cloth(MatX4f& particle_positions,
