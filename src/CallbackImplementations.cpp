@@ -11,7 +11,7 @@
 #include "CallbackImplementations.h"
 #include <iostream>
 
-#if USE_DX11
+#if PYNV_CLOTH_ENABLE_DX11
 #include <d3d11.h>
 #endif
 
@@ -41,7 +41,7 @@ void ErrorCallback::reportError(physx::PxErrorCode::Enum code, const char* messa
 	std::cout << "Log " << codeName << " from file:" << file << ":" << line << "\n MSG:" << message << std::endl;
 }
 
-#if USE_DX11
+#if PYNV_CLOTH_ENABLE_DX11
 DxContextManagerCallbackImpl::DxContextManagerCallbackImpl(ID3D11Device* device, bool synchronizeResources)
 	:
 	mDevice(device),
